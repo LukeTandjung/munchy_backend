@@ -1,13 +1,26 @@
 import numpy as np
 import pandas as pd
+import joblib
 from sklearn.linear_model import ElasticNet
+from sklearn.preprocessing import StandardScaler
 
-class BaseModel:
-    def __init__(self, data, chat_id = None):
+class MetaFeatures:
+    def __init__(self, data):
         if isinstance(data, dict):
-            self.process_user_data(data, chat_id)
+            self.process_user_data(data)
         elif isinstance(data, pd.DataFrame):
             self.process_dataframe(data)
+
+    def process_user_data(self, user_data):
+        self.bmr = pd.DataFrame([{
+            'sex': user_data["sex"],
+            'age': int(user_data["age"]),
+            'weight': float(user_data["weight"]),
+            'height': float(user_data["height"]),
+            'fat_percent': float(user_data["fat_percent"]),
+            'bmi': round(10000 * (float(user_data["weight"]) / (float(user_data["height"]) ** 2)), 1),
+            'ffm': (1 - (float(user_data["fat_percent"]) / 100)) * float(user_data["weight"])
+        }])
 
     def process_dataframe(self, data):
         self.bmr = pd.DataFrame({
@@ -20,18 +33,6 @@ class BaseModel:
             'ffm': data['FFM [kg]']
         })
         self.bmr_actual = data['iCal [kcal]']
-
-    def process_user_data(self, users, chat_id):
-        self.bmr = pd.DataFrame([{
-            'sex': users[chat_id]["Sex"],
-            'age': int(users[chat_id]["Age"]),
-            'weight': float(users[chat_id]["Weight"]),
-            'height': float(users[chat_id]["Height"]),
-            'fat_percent': float(users[chat_id]["FatPercent"]),
-            'bmi': round(10000 * (float(users[chat_id]["Weight"]) / (float(users[chat_id]["Height"]) ** 2)), 1),
-            'ffm': (1 - (float(users[chat_id]["FatPercent"]) / 100)) * float(users[chat_id]["Weight"])
-        }])
-        self.bmr_actual = None
     
     def process_age_category(self, row, function_dict, bmi = False, age_list = None):
         age_category = None
@@ -268,7 +269,7 @@ class BaseModel:
     def katch_model(self):  
         return self.bmr.apply(lambda row: 370 + 21.6 * row['ffm'], axis=1)
     
-    def values(self):
+    def meta(self):
         return pd.DataFrame({
         'harris_model': self.harris_model(),
         'roza_model': self.roza_model(), 
@@ -284,27 +285,84 @@ class BaseModel:
         'katch_model': self.katch_model()
     })
 
-class BasalRateModel:
+class TrainBasalRateModel:
+    def __init__(self):
+        self.dataset = pd.read_excel("model_data.xlsx")
+        base_model = MetaFeatures(self.dataset)
+        self.features = base_model.bmr
+        self.meta_features = base_model.meta()
+        self.response = base_model.bmr_actual
+        self.meta_model = None
+    
+    def train_model(self):
+        # Impute missing values in meta features with the mean of the row
+        imputed_meta_features = self.meta_features.apply(lambda row: row.fillna(row.mean()), axis=1)
 
-    file_path = "model_data.xlsx"
+        # Identify columns based on data type
+        numeric_columns = self.features.select_dtypes(include=['float64', 'int64']).columns
+        categorical_columns = self.features.select_dtypes(include=['object']).columns
 
-    def __init__(self, data, chat_id = None):
-        if isinstance(data, dict):
-            self.predict = BaseModel(data, chat_id)
-            self.features = BaseModel(pd.read_excel(file_path))
-        elif isinstance(data, pd.DataFrame):
-            self.features = BaseModel(data)
+        # Split features based on data type
+        numeric_features = self.features[numeric_columns]
+        sex_feature = self.features[categorical_columns]
 
-        self.predict = None
-        self.features = BaseModel(data).values()
-            
-    def write_predictions_to_dataset(self):
-        # Replace None or np.nan values with the row mean
-        training_dataframe = self.features.apply(lambda row: row.fillna(row.mean()), axis=1)
+        # Combine numeric features and meta features
+        combined_features = pd.concat([numeric_features, imputed_meta_features], axis=1)
 
-        # Write the DataFrame to a new CSV file
-        training_dataframe.to_csv("meta_model_data.csv", index=False)
+        # Standardize numeric columns
+        scaler = StandardScaler()
+        standardized_features = scaler.fit_transform(combined_features)
+        standardized_features_df = pd.DataFrame(standardized_features, columns=combined_features.columns)
 
-data = BasalRateModel()
-data.write_predictions_to_dataset()
+        # One-hot encode the 'sex' column
+        encoded_sex = pd.get_dummies(sex_feature, columns=['sex'])
 
+        # Combine encoded sex feature with standardized features
+        prepared_features = pd.concat([encoded_sex, standardized_features_df], axis=1)
+
+        # Train the ElasticNet model. Save the Elastic Model and the Scaler into the file.
+        self.meta_model = ElasticNet()
+        self.meta_model.fit(prepared_features, self.response)
+        joblib.dump(self.meta_model, 'bmr_model.pkl')
+        joblib.dump(scaler, 'scaler.pkl')
+
+class PredictBasalRateModel:
+    def __init__(self, user_data):
+        base_model = MetaFeatures(user_data)
+        self.features = base_model.bmr
+        self.meta_features = base_model.meta()
+        self.meta_model = joblib.load('bmr_model.pkl')
+        self.scaler = joblib.load('scaler.pkl')
+    
+    def predict_model(self):
+        # Impute missing values in meta features with the mean of the row
+        imputed_meta_features = self.meta_features.apply(lambda row: row.fillna(row.mean()), axis=1)
+
+        # Identify columns based on data type
+        numeric_columns = self.features.select_dtypes(include=['float64', 'int64']).columns
+        categorical_columns = self.features.select_dtypes(include=['object']).columns
+
+        # Split features based on data type
+        numeric_features = self.features[numeric_columns]
+        sex_feature = self.features[categorical_columns]
+
+        # Combine numeric features and meta features
+        combined_features = pd.concat([numeric_features, imputed_meta_features], axis=1)
+
+        # Standardize numeric columns using the same instance of scaler
+        standardized_features = self.scaler.transform(combined_features)
+        standardized_features_df = pd.DataFrame(standardized_features, columns=combined_features.columns)
+
+        # One-hot encode the 'sex' column
+        encoded_sex = pd.get_dummies(sex_feature, columns=['sex'])
+
+        # Combine encoded sex feature with standardized features
+        prepared_features = pd.concat([encoded_sex, standardized_features_df], axis=1)
+
+        # Train the ElasticNet model. Save the Elastic Model and the Scaler into the file.
+        predictions = self.meta_model.fit(prepared_features)[0]
+        return predictions
+
+# Run this block of code if you want to re-train the ElasticNet model with new data.
+data = TrainBasalRateModel()
+data.train_model()
