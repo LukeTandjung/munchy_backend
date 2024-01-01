@@ -1,5 +1,5 @@
-runtime: python39
+runtime: python310
 
 handlers:
-- url: /<string:email>/diet
-  script: main.py
+  - url: /<string:email>/diet
+    script: main.py

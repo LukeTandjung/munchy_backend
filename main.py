@@ -1,38 +1,32 @@
-""" # SERVER-SIDE CODE TO OPTIMISE DIET
-
-import os
-from flask import Flask, request
-from bot import MunchyBot
-import session
+from flask import Flask, request, jsonify
+from algorithm.plan_diet import Diet
+import pandas as pd
 
 app = Flask(__name__)
 
-bot = MunchyBot()
-        
-@app.route('/', methods = ['POST'])
-def webhook():
-    input = request.get_json()
-    return bot.handle_updates(input)
-    
-if __name__ == '__main__':
-   app.run(threaded = True) 
-
-
-@app.route("/<string:email>/diet", methods = ["POST"])
+@app.route("/<string:email>/diet", methods=["POST"])
 def create_user_diet(email):
     request_data = request.get_json()
     user = {
-        "Email": request_data["Email"],
-        "Password": request_data["Password"],
-        "Promotional": request_data["Promotional"],
-        "Name": request_data["Name"],
-        "Age": request_data["Age"],
-        "Sex": request_data["Sex"],
-        "Height": request_data["Height"],
-        "Weight": request_data["Weight"],
-        "Body Fat": request_data["Body Fat"],
-        "Diet": request_data["Diet"]
+        "email": email,
+        "uid": request_data["ID"],
+        "age": request_data["Age"],
+        "sex": request_data["Sex"],
+        "height": request_data["Height"],
+        "weight": request_data["Weight"],
+        "fat_percent": request_data["Body Fat"],
+        "goal": request_data["Goal"],
+        "meals": request_data["Meals"],
+        "interval": request_data["Interval"],
+        "cheat_meals": request_data["Cheat Meals"],
+        "lifestyle": request_data["Lifestyle"],
+        "activity": request_data["Activity"],
+        "excluded_food": request_data["Excluded Food"]
     }
-    ...
+    diet = Diet(user)
+    raw_data = diet.iterate()  # Placeholder for the diet plan logic
+    user_diet_dict = {date.strftime("%d %B %Y"): value for date, value in raw_data.items()}
     return jsonify(user_diet_dict)
- """
+
+if __name__ == '__main__':
+    app.run(threaded=True)
