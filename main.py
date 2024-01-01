@@ -4,12 +4,11 @@ import pandas as pd
 
 app = Flask(__name__)
 
-@app.route("/<string:email>/diet", methods=["POST"])
-def create_user_diet(email):
+@app.route("/<string:uid>/diet", methods=["POST"])
+def create_user_diet(uid):
     request_data = request.get_json()
     user = {
-        "email": email,
-        "uid": request_data["ID"],
+        "uid": uid,
         "age": request_data["Age"],
         "sex": request_data["Sex"],
         "height": request_data["Height"],
